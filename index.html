@@ -515,11 +515,71 @@
         <input type="range" id="adjSharpen" min="0" max="100" value="0">
         <span class="val" id="adjSharpenVal">0</span>
       </div>
+      <div class="panel-row">
+        <label>Gamma</label>
+        <input type="range" id="adjGamma" min="20" max="300" value="100">
+        <span class="val" id="adjGammaVal">1.0</span>
+      </div>
+      <div class="panel-row">
+        <label>Exposición</label>
+        <input type="range" id="adjExposure" min="-100" max="100" value="0">
+        <span class="val" id="adjExposureVal">0</span>
+      </div>
+      <div class="panel-row">
+        <label>Sombras</label>
+        <input type="range" id="adjShadows" min="-100" max="100" value="0">
+        <span class="val" id="adjShadowsVal">0</span>
+      </div>
+      <div class="panel-row">
+        <label>Luces</label>
+        <input type="range" id="adjHighlights" min="-100" max="100" value="0">
+        <span class="val" id="adjHighlightsVal">0</span>
+      </div>
       <div class="panel-actions" style="flex-direction:row; gap:0.3rem;">
         <button class="btn btn-accent" onclick="applyAdjustments()" style="flex:1;">Aplicar</button>
         <button class="btn btn-danger btn-sm" onclick="resetAdjustments()">Reset</button>
       </div>
-      <div style="font-size:0.6rem; color:#666; margin-top:0.3rem;">Preview en vivo · "Aplicar" confirma los cambios</div>
+      <div style="font-size:0.6rem; color:#666; margin-top:0.3rem;">Preview en vivo · "Aplicar" confirma</div>
+    </div>
+
+    <div class="panel-section">
+      <h4>Efectos rápidos</h4>
+      <div class="panel-actions">
+        <button class="btn" onclick="autoCleanSignature()">⚡ Auto-limpiar firma</button>
+        <button class="btn" onclick="posterize()">🎨 Posterizar</button>
+        <button class="btn" onclick="edgeDetect()">✏️ Detectar bordes</button>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>Sobreponer firma</h4>
+      <div class="panel-actions">
+        <button class="btn btn-accent" onclick="saveSignatureLayer()">💾 Guardar firma actual</button>
+        <button class="btn" onclick="loadBackgroundImage()">🖼️ Cargar fondo/documento</button>
+      </div>
+      <input type="file" id="bgFileInput" accept="image/*,.pdf" style="display:none">
+      <div id="stampControls" style="display:none; margin-top:0.5rem;">
+        <div class="panel-row">
+          <label>Escala</label>
+          <input type="range" id="stampScale" min="10" max="200" value="100">
+          <span class="val" id="stampScaleVal">100%</span>
+        </div>
+        <div class="panel-row">
+          <label>Rotación</label>
+          <input type="range" id="stampRotation" min="-180" max="180" value="0">
+          <span class="val" id="stampRotationVal">0°</span>
+        </div>
+        <div class="panel-row">
+          <label>Opacidad</label>
+          <input type="range" id="stampOpacity" min="20" max="100" value="100">
+          <span class="val" id="stampOpacityVal">100%</span>
+        </div>
+        <div style="font-size:0.6rem; color:#888; margin:0.3rem 0;">Arrastra la firma para posicionarla</div>
+        <div class="panel-actions">
+          <button class="btn btn-success" onclick="flattenStamp()">✅ Fusionar capas</button>
+          <button class="btn btn-danger btn-sm" onclick="cancelStamp()">Cancelar</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel-section">
@@ -1047,13 +1107,16 @@ function invertColors() {
 let adjustmentBase = null; // snapshot before adjustments
 let previewTimeout = null;
 
-const adjSliders = ['adjBrightness', 'adjContrast', 'adjSaturation', 'adjLevels', 'adjSharpen'];
+const adjSliders = ['adjBrightness', 'adjContrast', 'adjSaturation', 'adjLevels', 'adjSharpen', 'adjGamma', 'adjExposure', 'adjShadows', 'adjHighlights'];
 
 adjSliders.forEach(id => {
   const slider = document.getElementById(id);
+  if (!slider) return;
   slider.addEventListener('input', () => {
-    document.getElementById(id + 'Val').textContent = slider.value;
-    // Live preview with debounce
+    const val = slider.value;
+    const el = document.getElementById(id + 'Val');
+    if (id === 'adjGamma') el.textContent = (val / 100).toFixed(1);
+    else el.textContent = val;
     if (!adjustmentBase) {
       adjustmentBase = ctx.getImageData(0, 0, canvas.width, canvas.height);
     }
@@ -1069,19 +1132,25 @@ function previewAdjustments() {
   const saturation = parseInt(document.getElementById('adjSaturation').value);
   const levels = parseInt(document.getElementById('adjLevels').value);
   const sharpen = parseInt(document.getElementById('adjSharpen').value);
+  const gamma = parseInt(document.getElementById('adjGamma').value) / 100;
+  const exposure = parseInt(document.getElementById('adjExposure').value);
+  const shadows = parseInt(document.getElementById('adjShadows').value);
+  const highlights = parseInt(document.getElementById('adjHighlights').value);
 
-  // Work on a copy
   const imgData = new ImageData(
     new Uint8ClampedArray(adjustmentBase.data),
     adjustmentBase.width, adjustmentBase.height
   );
   const data = imgData.data;
-
-  // Contrast factor
   const cFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+  const expFactor = Math.pow(2, exposure / 50);
+  const invGamma = 1 / gamma;
 
   for (let i = 0; i < data.length; i += 4) {
     let r = data[i], g = data[i + 1], b = data[i + 2];
+
+    // Exposure
+    if (exposure !== 0) { r *= expFactor; g *= expFactor; b *= expFactor; }
 
     // Brightness
     r += brightness * 2.55; g += brightness * 2.55; b += brightness * 2.55;
@@ -1091,7 +1160,34 @@ function previewAdjustments() {
     g = cFactor * (g - 128) + 128;
     b = cFactor * (b - 128) + 128;
 
-    // Levels (crush shadows)
+    // Gamma
+    if (gamma !== 1) {
+      r = 255 * Math.pow(Math.max(0, r) / 255, invGamma);
+      g = 255 * Math.pow(Math.max(0, g) / 255, invGamma);
+      b = 255 * Math.pow(Math.max(0, b) / 255, invGamma);
+    }
+
+    // Shadows (lift dark tones)
+    if (shadows !== 0) {
+      const lum = (r + g + b) / 3;
+      if (lum < 128) {
+        const factor = (128 - lum) / 128;
+        const lift = shadows * 1.5 * factor;
+        r += lift; g += lift; b += lift;
+      }
+    }
+
+    // Highlights (pull bright tones)
+    if (highlights !== 0) {
+      const lum = (r + g + b) / 3;
+      if (lum > 128) {
+        const factor = (lum - 128) / 128;
+        const pull = highlights * 1.5 * factor;
+        r += pull; g += pull; b += pull;
+      }
+    }
+
+    // Levels
     if (levels > 0) {
       const lvl = levels * 2.55;
       r = ((r - lvl) / (255 - lvl)) * 255;
@@ -1113,7 +1209,7 @@ function previewAdjustments() {
     data[i + 2] = Math.max(0, Math.min(255, b));
   }
 
-  // Sharpen (simple unsharp mask)
+  // Sharpen
   if (sharpen > 0) {
     const strength = sharpen / 50;
     const w = imgData.width, h = imgData.height;
@@ -1146,14 +1242,221 @@ function applyAdjustments() {
 function resetAdjustments() {
   adjSliders.forEach(id => {
     const slider = document.getElementById(id);
-    slider.value = id === 'adjLevels' || id === 'adjSharpen' ? 0 : 0;
-    document.getElementById(id + 'Val').textContent = '0';
+    if (!slider) return;
+    slider.value = id === 'adjGamma' ? 100 : 0;
+    const el = document.getElementById(id + 'Val');
+    if (el) el.textContent = id === 'adjGamma' ? '1.0' : '0';
   });
   if (adjustmentBase) {
     ctx.putImageData(adjustmentBase, 0, 0);
     adjustmentBase = null;
   }
   showToast('Ajustes reseteados');
+}
+
+// === QUICK EFFECTS ===
+function autoCleanSignature() {
+  // One-click: desaturate + boost contrast + crush shadows
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    let gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+    // Boost contrast
+    gray = ((gray - 128) * 1.8) + 128;
+    // Crush midtones toward black or white
+    gray = gray < 140 ? gray * 0.5 : Math.min(255, gray * 1.3);
+    gray = Math.max(0, Math.min(255, gray));
+    data[i] = data[i+1] = data[i+2] = gray;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  saveState();
+  showToast('Firma auto-limpiada');
+}
+
+function posterize() {
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
+  const levels = 4;
+  const step = 255 / (levels - 1);
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.round(Math.round(data[i] / step) * step);
+    data[i+1] = Math.round(Math.round(data[i+1] / step) * step);
+    data[i+2] = Math.round(Math.round(data[i+2] / step) * step);
+  }
+  ctx.putImageData(imgData, 0, 0);
+  saveState();
+  showToast('Posterizado');
+}
+
+function edgeDetect() {
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const src = new Uint8ClampedArray(imgData.data);
+  const data = imgData.data;
+  const w = canvas.width, h = canvas.height;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const gx = -src[((y-1)*w+x-1)*4+c] + src[((y-1)*w+x+1)*4+c]
+                   -2*src[(y*w+x-1)*4+c] + 2*src[(y*w+x+1)*4+c]
+                   -src[((y+1)*w+x-1)*4+c] + src[((y+1)*w+x+1)*4+c];
+        const gy = -src[((y-1)*w+x-1)*4+c] - 2*src[((y-1)*w+x)*4+c] - src[((y-1)*w+x+1)*4+c]
+                   +src[((y+1)*w+x-1)*4+c] + 2*src[((y+1)*w+x)*4+c] + src[((y+1)*w+x+1)*4+c];
+        data[idx+c] = Math.min(255, Math.sqrt(gx*gx + gy*gy));
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  saveState();
+  showToast('Bordes detectados');
+}
+
+// === STAMP / LAYER SYSTEM ===
+let savedSignature = null; // ImageData of the clean signature
+let stampMode = false;
+let stampX = 50, stampY = 50;
+let stampDragging = false;
+let bgImage = null;
+
+function saveSignatureLayer() {
+  // Crop to visible content and save
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const { data, width, height } = imgData;
+  let top = height, left = width, right = 0, bottom = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] > 10) {
+        if (y < top) top = y; if (y > bottom) bottom = y;
+        if (x < left) left = x; if (x > right) right = x;
+      }
+    }
+  }
+  if (right <= left || bottom <= top) { showToast('No hay firma visible. Primero quita el fondo.'); return; }
+  const pad = 5;
+  top = Math.max(0, top-pad); left = Math.max(0, left-pad);
+  right = Math.min(width-1, right+pad); bottom = Math.min(height-1, bottom+pad);
+  const cw = right-left+1, ch = bottom-top+1;
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = cw; cropCanvas.height = ch;
+  cropCanvas.getContext('2d').putImageData(ctx.getImageData(left, top, cw, ch), 0, 0);
+  
+  savedSignature = new Image();
+  savedSignature.src = cropCanvas.toDataURL('image/png');
+  savedSignature.onload = () => {
+    showToast('Firma guardada. Ahora carga un fondo/documento.');
+  };
+}
+
+document.getElementById('bgFileInput').addEventListener('change', (e) => {
+  if (!e.target.files[0]) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    bgImage = new Image();
+    bgImage.onload = () => {
+      canvas.width = bgImage.width;
+      canvas.height = bgImage.height;
+      ctx.drawImage(bgImage, 0, 0);
+      document.getElementById('statusDim').textContent = `${bgImage.width} × ${bgImage.height}`;
+      zoomFit();
+      
+      if (savedSignature) {
+        stampMode = true;
+        stampX = canvas.width / 2 - savedSignature.width / 2;
+        stampY = canvas.height / 2 - savedSignature.height / 2;
+        document.getElementById('stampControls').style.display = 'block';
+        renderStamp();
+        showToast('Arrastra la firma para posicionarla');
+      } else {
+        saveState();
+        showToast('Fondo cargado');
+      }
+    };
+    bgImage.src = ev.target.result;
+  };
+  reader.readAsDataURL(e.target.files[0]);
+});
+
+function loadBackgroundImage() {
+  document.getElementById('bgFileInput').click();
+}
+
+// Stamp rendering
+function renderStamp() {
+  if (!stampMode || !savedSignature || !bgImage) return;
+  const scale = parseInt(document.getElementById('stampScale').value) / 100;
+  const rotation = parseInt(document.getElementById('stampRotation').value) * Math.PI / 180;
+  const opacity = parseInt(document.getElementById('stampOpacity').value) / 100;
+  
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bgImage, 0, 0);
+  
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.translate(stampX + savedSignature.width * scale / 2, stampY + savedSignature.height * scale / 2);
+  ctx.rotate(rotation);
+  ctx.drawImage(savedSignature, -savedSignature.width * scale / 2, -savedSignature.height * scale / 2, savedSignature.width * scale, savedSignature.height * scale);
+  ctx.restore();
+}
+
+['stampScale', 'stampRotation', 'stampOpacity'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const val = el.value;
+    const label = document.getElementById(id + 'Val');
+    if (id === 'stampScale') label.textContent = val + '%';
+    else if (id === 'stampRotation') label.textContent = val + '°';
+    else label.textContent = val + '%';
+    renderStamp();
+  });
+});
+
+// Stamp dragging
+canvasArea.addEventListener('mousedown', (e) => {
+  if (!stampMode || !savedSignature) return;
+  const pos = getCanvasPos(e.clientX, e.clientY);
+  const scale = parseInt(document.getElementById('stampScale').value) / 100;
+  const sw = savedSignature.width * scale, sh = savedSignature.height * scale;
+  if (pos.x >= stampX && pos.x <= stampX + sw && pos.y >= stampY && pos.y <= stampY + sh) {
+    stampDragging = true;
+    lastX = pos.x - stampX;
+    lastY = pos.y - stampY;
+    e.stopPropagation();
+  }
+}, true);
+
+canvasArea.addEventListener('mousemove', (e) => {
+  if (!stampDragging) return;
+  const pos = getCanvasPos(e.clientX, e.clientY);
+  stampX = pos.x - lastX;
+  stampY = pos.y - lastY;
+  renderStamp();
+}, true);
+
+canvasArea.addEventListener('mouseup', () => {
+  stampDragging = false;
+}, true);
+
+function flattenStamp() {
+  if (!stampMode) return;
+  renderStamp();
+  stampMode = false;
+  document.getElementById('stampControls').style.display = 'none';
+  bgImage = null;
+  originalImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  saveState();
+  showToast('Capas fusionadas');
+}
+
+function cancelStamp() {
+  if (!bgImage) return;
+  stampMode = false;
+  document.getElementById('stampControls').style.display = 'none';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bgImage, 0, 0);
+  bgImage = null;
+  saveState();
+  showToast('Stamp cancelado');
 }
 
 // === AI ===
